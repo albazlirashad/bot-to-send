@@ -33,7 +33,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# إعداد قائمة الأوامر والزر الجانبي (Menu Button)
 def set_bot_commands():
     commands = [
         types.BotCommand("start", "🚀 بدء البوت / إعادة ضبط"),
@@ -94,23 +93,55 @@ def start_command(message):
     welcome_text = (
         "👋 **أهلاً بك في بوت نشر الاختبارات التفاعلية**\n\n"
         "هذا البوت يساعدك على تنسيق ونشر الأسئلة في قناتك بشكل آلي وسريع.\n"
-        "استخدم زر **Menu** الجانبي للوصول السريع للأوامر."
+        "--------------------------\n"
+        "📜 **شروط وقواعد إرسال الأسئلة:**\n"
+        "1️⃣ **الكمية:** يمكنك إرسال عدة أسئلة في رسالة واحدة.\n"
+        "2️⃣ **الفصل:** يجب ترك **سطر فارغ** بين كل سؤال والآخر.\n"
+        "3️⃣ **الإجابة:** يجب وضع الإجابة الصحيحة بين علامتي `< >`.\n"
+        "4️⃣ **الخيارات:** يمكنك وضع أي عدد من الخيارات لكل سؤال."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
     time.sleep(1)
     
-    msg = bot.send_message(message.chat.id, "📍 **الخطوة الأولى:** أرسل معرف القناة (مثال: @mychannel):")
+    msg = bot.send_message(message.chat.id, "📍 **الخطوة الأولى:** أرسل معرف القناة أو رابطها (مثلاً: @mychannel أو رابط القناة):")
     bot.register_next_step_handler(msg, save_channel_step)
 
 def save_channel_step(message):
-    channel_id = message.text.strip()
-    if not channel_id.startswith('@'):
-        msg = bot.reply_to(message, "⚠️ خطأ! يجب أن يبدأ بـ @. حاول مرة أخرى:")
-        bot.register_next_step_handler(msg, save_channel_step)
-        return
+    raw_input = message.text.strip()
+    
+    # --- منطق الذكاء لتغطية كل الاحتمالات (رابط، معرف، اسم) ---
+    # 1. إذا كان رابطاً مثل https://t.me/username
+    if 't.me/' in raw_input:
+        channel_id = '@' + raw_input.split('t.me/')[-1].split('/')[0]
+    # 2. إذا بدأ بـ @ نتركه كما هو
+    elif raw_input.startswith('@'):
+        channel_id = raw_input
+    # 3. إذا أرسل الاسم فقط بدون @
+    else:
+        channel_id = '@' + raw_input
+
+    # تنظيف أي مسافات زائدة قد تكون موجودة
+    channel_id = channel_id.replace(' ', '')
 
     set_user_channel(message.chat.id, channel_id)
-    bot.send_message(message.chat.id, f"✅ **تم حفظ القناة:** {channel_id}\n🚀 يمكنك الآن إرسال الأسئلة!")
+    
+    example_text = (
+        f"✅ **تم حفظ القناة:** {channel_id}\n\n"
+        "👇 **مثال للتنسيق الصحيح (انسخ وأرسل مثله):**\n\n"
+        "ما هي عاصمة اليمن؟\n"
+        "عدن\n"
+        "<صنعاء>\n"
+        "تعز\n\n"
+        "هل الذهب معدن؟\n"
+        "<نعم>\n"
+        "لا\n\n"
+        "ما هو لون السماء الصافية؟\n"
+        "أحمر\n"
+        "أخضر\n"
+        "<أزرق>\n\n"
+        "🚀 **أرسل أسئلتك الآن ليتم نشرها فوراً!**"
+    )
+    bot.send_message(message.chat.id, example_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['settings'])
 def show_settings(message):
@@ -122,18 +153,17 @@ def show_settings(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "change_ch")
 def change_channel_callback(call):
-    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة الجديد:")
+    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة أو الرابط الجديد:")
     bot.register_next_step_handler(msg, save_channel_step)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
-        "📜 **كيفية كتابة الأسئلة:**\n\n"
-        "السؤال الأول هنا\n"
-        "خيار خطأ\n"
-        "<خيار صح>\n"
-        "خيار خطأ آخر\n\n"
-        "⚠️ اترك سطر فارغ بين كل سؤال والآخر."
+        "📜 **تذكير بكيفية التنسيق:**\n\n"
+        "اكتب السؤال في سطر\n"
+        "الخيارات في أسطر تالية\n"
+        "ضع الإجابة الصحيحة بين < >\n"
+        "**اترك سطر فارغ بين كل سؤال والآخر.**"
     )
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
@@ -141,29 +171,39 @@ def help_command(message):
 def handle_questions(message):
     channel_id = get_user_channel(message.chat.id)
     if not channel_id:
-        msg = bot.reply_to(message, "⚠️ حدد قناة أولاً:")
+        msg = bot.reply_to(message, "⚠️ من فضلك حدد قناة أولاً عبر إرسال المعرف (مثلاً @channel):")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
     questions = parse_questions_universal(message.text)
     if not questions:
-        bot.reply_to(message, "⚠️ التنسيق غير صحيح.")
+        bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وجود <الإجابة الصحيحة> وسطر فارغ بين الأسئلة.")
         return
 
-    bot.reply_to(message, f"⏳ جاري النشر...")
+    bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
+    sent_count = 0
     for q in questions:
         try:
-            bot.send_poll(chat_id=channel_id, question=q['question'], options=q['options'], 
-                          type='quiz', correct_option_id=q['correct'], is_anonymous=True)
+            bot.send_poll(
+                chat_id=channel_id,
+                question=q['question'],
+                options=q['options'],
+                type='quiz',
+                correct_option_id=q['correct'],
+                is_anonymous=True
+            )
+            sent_count += 1
             time.sleep(2)
-        except: break
-    bot.send_message(message.chat.id, "✅ تم النشر.")
+        except Exception:
+            bot.send_message(message.chat.id, "❌ فشل النشر. تأكد أن البوت آدمن في القناة.")
+            break
+    bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح.")
 
 if __name__ == "__main__":
     init_db()
-    set_bot_commands() # تفعيل الزر الجانبي وقائمة الأوامر
+    set_bot_commands()
     Thread(target=run_web_server).start()
-    print("البوت يعمل...")
+    print("البوت يعمل بالتحديث الذكي للمعرفات...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
