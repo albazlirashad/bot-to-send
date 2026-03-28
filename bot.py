@@ -33,6 +33,15 @@ def init_db():
     conn.commit()
     conn.close()
 
+# إعداد قائمة الأوامر والزر الجانبي (Menu Button)
+def set_bot_commands():
+    commands = [
+        types.BotCommand("start", "🚀 بدء البوت / إعادة ضبط"),
+        types.BotCommand("settings", "⚙️ إعدادات القناة"),
+        types.BotCommand("help", "❓ تعليمات التنسيق")
+    ]
+    bot.set_my_commands(commands)
+
 def set_user_channel(user_id, channel_id):
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
@@ -78,46 +87,35 @@ def parse_questions_universal(text):
             parsed_data.append({'question': question_text, 'options': options, 'correct': correct_index})
     return parsed_data
 
-# --- تدفق الرسائل (الترحيب ثم الإعداد) ---
+# --- الردود والأوامر ---
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
     welcome_text = (
         "👋 **أهلاً بك في بوت نشر الاختبارات التفاعلية**\n\n"
-        "هذا البوت يساعدك على تنسيق ونشر الأسئلة في قناتك بشكل آلي وسريع."
+        "هذا البوت يساعدك على تنسيق ونشر الأسئلة في قناتك بشكل آلي وسريع.\n"
+        "استخدم زر **Menu** الجانبي للوصول السريع للأوامر."
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
     time.sleep(1)
     
-    # الانتقال لطلب القناة
-    msg = bot.send_message(message.chat.id, "📍 **الخطوة الأولى:** أرسل معرف القناة التي تريد النشر فيها (مثال: @mychannel):")
+    msg = bot.send_message(message.chat.id, "📍 **الخطوة الأولى:** أرسل معرف القناة (مثال: @mychannel):")
     bot.register_next_step_handler(msg, save_channel_step)
 
 def save_channel_step(message):
     channel_id = message.text.strip()
     if not channel_id.startswith('@'):
-        msg = bot.reply_to(message, "⚠️ خطأ! يجب أن يبدأ المعرف بـ @. حاول مرة أخرى:")
+        msg = bot.reply_to(message, "⚠️ خطأ! يجب أن يبدأ بـ @. حاول مرة أخرى:")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
     set_user_channel(message.chat.id, channel_id)
-    
-    example_text = (
-        f"✅ **تم حفظ القناة:** {channel_id}\n\n"
-        "📜 **الآن يمكنك البدء بإرسال الأسئلة بهذا التنسيق:**\n\n"
-        "ما هي عاصمة اليمن؟\n"
-        "عدن\n"
-        "<صنعاء>\n"
-        "تعز\n\n"
-        "🚀 أرسل أسئلتك الآن!"
-    )
-    bot.send_message(message.chat.id, example_text, parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"✅ **تم حفظ القناة:** {channel_id}\n🚀 يمكنك الآن إرسال الأسئلة!")
 
 @bot.message_handler(commands=['settings'])
 def show_settings(message):
     current = get_user_channel(message.chat.id)
     text = f"⚙️ **إعداداتك الحالية:**\n📍 القناة: `{current if current else 'غير محددة'}`"
-    
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🔄 تغيير القناة", callback_data="change_ch"))
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
@@ -127,45 +125,47 @@ def change_channel_callback(call):
     msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة الجديد:")
     bot.register_next_step_handler(msg, save_channel_step)
 
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    help_text = (
+        "📜 **كيفية كتابة الأسئلة:**\n\n"
+        "السؤال الأول هنا\n"
+        "خيار خطأ\n"
+        "<خيار صح>\n"
+        "خيار خطأ آخر\n\n"
+        "⚠️ اترك سطر فارغ بين كل سؤال والآخر."
+    )
+    bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
+
 @bot.message_handler(func=lambda message: True)
 def handle_questions(message):
     channel_id = get_user_channel(message.chat.id)
     if not channel_id:
-        msg = bot.reply_to(message, "⚠️ لم تقم بتحديد قناة للنشر. أرسل المعرف الآن (مثلاً @channel):")
+        msg = bot.reply_to(message, "⚠️ حدد قناة أولاً:")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
     questions = parse_questions_universal(message.text)
     if not questions:
-        bot.reply_to(message, "⚠️ التنسيق غير صحيح. تأكد من وضع الإجابة الصحيحة بين < >.")
+        bot.reply_to(message, "⚠️ التنسيق غير صحيح.")
         return
 
-    bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
-    sent_count = 0
+    bot.reply_to(message, f"⏳ جاري النشر...")
     for q in questions:
         try:
-            bot.send_poll(
-                chat_id=channel_id,
-                question=q['question'],
-                options=q['options'],
-                type='quiz',
-                correct_option_id=q['correct'],
-                is_anonymous=True
-            )
-            sent_count += 1
+            bot.send_poll(chat_id=channel_id, question=q['question'], options=q['options'], 
+                          type='quiz', correct_option_id=q['correct'], is_anonymous=True)
             time.sleep(2)
-        except Exception:
-            bot.send_message(message.chat.id, "❌ خطأ! تأكد أن البوت مسؤول في القناة.")
-            break
-
-    bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال.")
+        except: break
+    bot.send_message(message.chat.id, "✅ تم النشر.")
 
 if __name__ == "__main__":
-    init_db() # إنشاء قاعدة البيانات عند التشغيل
+    init_db()
+    set_bot_commands() # تفعيل الزر الجانبي وقائمة الأوامر
     Thread(target=run_web_server).start()
-    print("البوت يعمل مع قاعدة البيانات...")
+    print("البوت يعمل...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
-            time.sleep(5)
+            time.sleep(1)
