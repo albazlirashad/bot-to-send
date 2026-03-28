@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- إعداد خادم الويب لـ Render ---
+# --- إعداد خادم الويب لـ Render لضمان استجابة UptimeRobot ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,6 +18,7 @@ def home():
     return "Bot is Running Live!"
 
 def run_web_server():
+    # ريندر يحدد المنفذ تلقائياً عبر متغيرات البيئة
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -33,6 +34,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# إعداد قائمة الأوامر والزر الجانبي (Menu Button)
 def set_bot_commands():
     commands = [
         types.BotCommand("start", "🚀 بدء البوت / إعادة ضبط"),
@@ -110,19 +112,14 @@ def save_channel_step(message):
     raw_input = message.text.strip()
     
     # --- منطق الذكاء لتغطية كل الاحتمالات (رابط، معرف، اسم) ---
-    # 1. إذا كان رابطاً مثل https://t.me/username
     if 't.me/' in raw_input:
         channel_id = '@' + raw_input.split('t.me/')[-1].split('/')[0]
-    # 2. إذا بدأ بـ @ نتركه كما هو
     elif raw_input.startswith('@'):
         channel_id = raw_input
-    # 3. إذا أرسل الاسم فقط بدون @
     else:
         channel_id = '@' + raw_input
 
-    # تنظيف أي مسافات زائدة قد تكون موجودة
     channel_id = channel_id.replace(' ', '')
-
     set_user_channel(message.chat.id, channel_id)
     
     example_text = (
@@ -195,15 +192,16 @@ def handle_questions(message):
             sent_count += 1
             time.sleep(2)
         except Exception:
-            bot.send_message(message.chat.id, "❌ فشل النشر. تأكد أن البوت آدمن في القناة.")
+            bot.send_message(message.chat.id, f"❌ فشل النشر في {channel_id}. تأكد أن البوت آدمن في القناة.")
             break
     bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح.")
 
+# --- تشغيل البوت مع السيرفر ---
 if __name__ == "__main__":
     init_db()
-    set_bot_commands()
+    set_bot_commands() # تفعيل الزر الجانبي وقائمة الأوامر
     Thread(target=run_web_server).start()
-    print("البوت يعمل بالتحديث الذكي للمعرفات...")
+    print("البوت يعمل بكافة الميزات الاحترافية...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
