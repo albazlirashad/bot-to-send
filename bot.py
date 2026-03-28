@@ -8,9 +8,10 @@ from threading import Thread
 from flask import Flask
 from dotenv import load_dotenv
 
+# تحميل التوكن من ملف .env
 load_dotenv()
 
-# --- إعداد خادم الويب لـ Render لضمان استجابة UptimeRobot ---
+# --- إعداد سيرفر Flask لضمان استمرارية الخدمة على Render ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,7 +19,6 @@ def home():
     return "Bot is Running Live!"
 
 def run_web_server():
-    # ريندر يحدد المنفذ تلقائياً عبر متغيرات البيئة
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -34,12 +34,11 @@ def init_db():
     conn.commit()
     conn.close()
 
-# إعداد قائمة الأوامر والزر الجانبي (Menu Button)
 def set_bot_commands():
     commands = [
-        types.BotCommand("start", "🚀 بدء البوت / إعادة ضبط"),
+        types.BotCommand("start", "🚀 بدء البوت / ربط القناة"),
         types.BotCommand("settings", "⚙️ إعدادات القناة"),
-        types.BotCommand("help", "❓ تعليمات التنسيق")
+        types.BotCommand("help", "❓ دليل التنسيق والمساعدة")
     ]
     bot.set_my_commands(commands)
 
@@ -58,7 +57,7 @@ def get_user_channel(user_id):
     conn.close()
     return result[0] if result else None
 
-# --- معالجة الأسئلة ---
+# --- منطق معالجة الأسئلة (المطور) ---
 def parse_questions_universal(text):
     blocks = re.split(r'\n\s*\n', text.strip())
     if len(blocks) <= 1:
@@ -88,30 +87,33 @@ def parse_questions_universal(text):
             parsed_data.append({'question': question_text, 'options': options, 'correct': correct_index})
     return parsed_data
 
-# --- الردود والأوامر ---
+# --- الأوامر والردود التفاعلية ---
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
     welcome_text = (
         "👋 **أهلاً بك في بوت نشر الاختبارات التفاعلية**\n\n"
-        "هذا البوت يساعدك على تنسيق ونشر الأسئلة في قناتك بشكل آلي وسريع.\n"
+        "أنا أساعدك على تحويل أسئلتك إلى اختبارات (Quizzes) ونشرها في قناتك آلياً.\n\n"
+        "📢 **شرط أساسي:**\n"
+        "يجب إضافة البوت كـ **مشرف (Admin)** في قناتك أولاً ومنحه صلاحية 'نشر الرسائل'.\n"
         "--------------------------\n"
-        "📜 **شروط وقواعد إرسال الأسئلة:**\n"
-        "1️⃣ **الكمية:** يمكنك إرسال عدة أسئلة في رسالة واحدة.\n"
-        "2️⃣ **الفصل:** يجب ترك **سطر فارغ** بين كل سؤال والآخر.\n"
-        "3️⃣ **الإجابة:** يجب وضع الإجابة الصحيحة بين علامتي `< >`.\n"
-        "4️⃣ **الخيارات:** يمكنك وضع أي عدد من الخيارات لكل سؤال."
+        "📜 **قواعد سريعة:**\n"
+        "1️⃣ اترك **سطر فارغ** بين كل سؤال والآخر.\n"
+        "2️⃣ ضع الإجابة الصحيحة بين علامتي **`< >`**.\n\n"
+        "📍 **الآن، أرسل معرف القناة (مثلاً @mychannel):**"
     )
-    bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
-    time.sleep(1)
-    
-    msg = bot.send_message(message.chat.id, "📍 **الخطوة الأولى:** أرسل معرف القناة أو رابطها (مثلاً: @mychannel أو رابط القناة):")
+    msg = bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
     bot.register_next_step_handler(msg, save_channel_step)
 
 def save_channel_step(message):
     raw_input = message.text.strip()
     
-    # --- منطق الذكاء لتغطية كل الاحتمالات (رابط، معرف، اسم) ---
+    # حماية: منع حفظ الأوامر كمعرف للقناة
+    if raw_input.startswith('/'):
+        msg = bot.send_message(message.chat.id, "⚠️ خطأ: يرجى إرسال معرف القناة (مثل @channel) وليس أمراً. حاول مجدداً:")
+        bot.register_next_step_handler(msg, save_channel_step)
+        return
+
     if 't.me/' in raw_input:
         channel_id = '@' + raw_input.split('t.me/')[-1].split('/')[0]
     elif raw_input.startswith('@'):
@@ -122,59 +124,57 @@ def save_channel_step(message):
     channel_id = channel_id.replace(' ', '')
     set_user_channel(message.chat.id, channel_id)
     
-    example_text = (
-        f"✅ **تم حفظ القناة:** {channel_id}\n\n"
-        "👇 **مثال للتنسيق الصحيح (انسخ وأرسل مثله):**\n\n"
+    success_text = (
+        f"✅ **تم حفظ القناة بنجاح:** {channel_id}\n\n"
+        "🚀 **أرسل أسئلتك الآن ليتم نشرها فوراً!**\n\n"
+        "💡 **مثال للتنسيق:**\n"
         "ما هي عاصمة اليمن؟\n"
         "عدن\n"
         "<صنعاء>\n"
-        "تعز\n\n"
-        "هل الذهب معدن؟\n"
-        "<نعم>\n"
-        "لا\n\n"
-        "ما هو لون السماء الصافية؟\n"
-        "أحمر\n"
-        "أخضر\n"
-        "<أزرق>\n\n"
-        "🚀 **أرسل أسئلتك الآن ليتم نشرها فوراً!**"
+        "تعز"
     )
-    bot.send_message(message.chat.id, example_text, parse_mode='Markdown')
+    bot.send_message(message.chat.id, success_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['settings'])
 def show_settings(message):
     current = get_user_channel(message.chat.id)
-    text = f"⚙️ **إعداداتك الحالية:**\n📍 القناة: `{current if current else 'غير محددة'}`"
+    text = f"⚙️ **إعدادات القناة:**\n📍 القناة الحالية: `{current if current else 'غير محددة'}`"
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🔄 تغيير القناة", callback_data="change_ch"))
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data == "change_ch")
 def change_channel_callback(call):
-    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة أو الرابط الجديد:")
+    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة الجديد:")
     bot.register_next_step_handler(msg, save_channel_step)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
-        "📜 **تذكير بكيفية التنسيق:**\n\n"
-        "اكتب السؤال في سطر\n"
-        "الخيارات في أسطر تالية\n"
-        "ضع الإجابة الصحيحة بين < >\n"
-        "**اترك سطر فارغ بين كل سؤال والآخر.**"
+        "📖 **دليل المساعدة والتنسيق**\n\n"
+        "1️⃣ أضف البوت مشرفاً (Admin) في القناة.\n"
+        "2️⃣ فعل صلاحية 'نشر الرسائل'.\n"
+        "3️⃣ أرسل الأسئلة مع سطر فارغ بين كل سؤال.\n\n"
+        "📝 **التنسيق الصحيح:**\n"
+        "السؤال هنا\n"
+        "خيار أول\n"
+        "<الخيار الصحيح>\n"
+        "خيار ثالث"
     )
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_questions(message):
     channel_id = get_user_channel(message.chat.id)
+    
     if not channel_id:
-        msg = bot.reply_to(message, "⚠️ من فضلك حدد قناة أولاً عبر إرسال المعرف (مثلاً @channel):")
+        msg = bot.reply_to(message, "⚠️ لم تربط قناة بعد. أرسل معرف قناتك الآن:")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
     questions = parse_questions_universal(message.text)
     if not questions:
-        bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وجود <الإجابة الصحيحة> وسطر فارغ بين الأسئلة.")
+        bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وضع الإجابة الصحيحة بين `< >` وسطر فارغ بين الأسئلة.")
         return
 
     bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
@@ -190,20 +190,16 @@ def handle_questions(message):
                 is_anonymous=True
             )
             sent_count += 1
-            time.sleep(2)
+            time.sleep(1)
         except Exception:
-            bot.send_message(message.chat.id, f"❌ فشل النشر في {channel_id}. تأكد أن البوت آدمن في القناة.")
+            bot.send_message(message.chat.id, f"❌ فشل النشر. تأكد أن البوت آدمن في القناة {channel_id}.")
             break
-    bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح.")
+            
+    if sent_count > 0:
+        bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح!")
 
-# --- تشغيل البوت مع السيرفر ---
 if __name__ == "__main__":
     init_db()
-    set_bot_commands() # تفعيل الزر الجانبي وقائمة الأوامر
+    set_bot_commands()
     Thread(target=run_web_server).start()
-    print("البوت يعمل بكافة الميزات الاحترافية...")
-    while True:
-        try:
-            bot.polling(none_stop=True, interval=0, timeout=20)
-        except Exception as e:
-            time.sleep(1)
+    bot.polling(none_stop=True)
