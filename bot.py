@@ -173,7 +173,7 @@ def change_channel_callback(call):
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
-        "📖 **دليل التنسيق الشامل والمطور**\n\n"
+        "📖 **دليل التنسيق الشامل**\n\n"
         "لتحويل رسائلك إلى اختبارات، اتبع هذا التنسيق بدقة:\n\n"
         "✅ **القواعد:**\n"
         "1️⃣ اترك سطرًا فارغًا بين كل سؤال والآخر.\n"
