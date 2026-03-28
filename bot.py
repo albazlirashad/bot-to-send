@@ -6,8 +6,10 @@ from threading import Thread
 from flask import Flask
 from dotenv import load_dotenv
 
+# تحميل المتغيرات البيئية (للتشغيل المحلي)
 load_dotenv()
 
+# --- إعداد خادم ويب بسيط لإبقاء ريندر مستيقظاً ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -15,25 +17,31 @@ def home():
     return "Bot is Running Live!"
 
 def run_web_server():
+    # ريندر يستخدم المنفذ 10000 أو المنفذ المحدد في البيئة
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
+# --- بيانات البوت والقناة ---
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+CHANNEL_ID = '@jjjjakjdopak' # القناة الافتراضية
+
 bot = telebot.TeleBot(API_TOKEN)
 
-# قاموس لتخزين معرف القناة لكل مستخدم بشكل مؤقت
-user_channels = {}
-
 def parse_questions_universal(text):
+    # تقسيم النص بناءً على أسطر فارغة
     blocks = re.split(r'\n\s*\n', text.strip())
+    
+    # إذا لم يجد تقسيمات واضحة بالأسطر، يجرب الترقيم
     if len(blocks) <= 1:
         blocks = re.split(r'\n(?=\d+[\.\-\)])|^(?=\d+[\.\-\)])', text.strip())
 
     parsed_data = []
+
     for block in blocks:
         lines = [l.strip() for l in block.strip().split('\n') if l.strip()]
         if len(lines) < 2: continue
 
+        # تنظيف السؤال من الترقيم
         question_raw = lines[0]
         question_text = re.sub(r'^\d+[\s\.\-\)]+', '', question_raw)
         question_text = re.sub(r'\[\d+.*?\]', '', question_text).strip()
@@ -57,50 +65,59 @@ def parse_questions_universal(text):
                 'options': options,
                 'correct': correct_index
             })
+
     return parsed_data
 
 @bot.message_handler(commands=['start'])
-def start_command(message):
-    msg = bot.reply_to(message, "👋 أهلاً بك! أولاً، أرسل لي معرف القناة التي تريد النشر فيها (مثال: @mychannel):")
-    bot.register_next_step_handler(msg, get_channel_id)
-
-def get_channel_id(message):
-    channel_id = message.text.strip()
-    if not channel_id.startswith('@'):
-        msg = bot.reply_to(message, "⚠️ خطأ! يجب أن يبدأ المعرف بـ @. حاول مرة أخرى:")
-        bot.register_next_step_handler(msg, get_channel_id)
-        return
-
-    user_channels[message.chat.id] = channel_id
-    
+def welcome(message):
+    # الرسالة الأولى: القواعد والترحيب
     welcome_text = (
-        f"✅ تم ضبط القناة على: {channel_id}\n\n"
-        "🚀 **الآن أرسل الأسئلة بالتنسيق المطلوب وسيتم نشرها فوراً!**\n\n"
-        "💡 ملاحظة: يجب أن يكون البوت **آدمن (Admin)** في القناة."
+        "👋 **أهلاً بك في بوت نشر الاختبارات التفاعلية**\n\n"
+        f"📍 **يتم النشر تلقائياً في:** {CHANNEL_ID}\n\n"
+        "📜 **شروط وقواعد إرسال الأسئلة:**\n"
+        "1️⃣ **الكمية:** يمكنك إرسال سؤال واحد أو **عشرات الأسئلة** في رسالة واحدة.\n"
+        "2️⃣ **الفصل:** يجب ترك **سطر فارغ** بين كل سؤال والآخر.\n"
+        "3️⃣ **الإجابة:** يجب وضع الإجابة الصحيحة بين علامتي `< >`.\n"
+        "4️⃣ **الخيارات:** يمكنك وضع أي عدد من الخيارات لكل سؤال (خيارين أو أكثر)."
     )
+
+    # الرسالة الثانية: المثال التوضيحي
+    example_text = (
+        "👇 **مثال للتنسيق الصحيح:**\n\n"
+        "ما هي عاصمة اليمن؟\n"
+        "عدن\n"
+        "<صنعاء>\n"
+        "تعز\n\n"
+        "هل الذهب معدن؟\n"
+        "<نعم>\n"
+        "لا\n\n"
+        "ما هو لون السماء الصافية؟\n"
+        "أحمر\n"
+        "أخضر\n"
+        "<أزرق>"
+    )
+
+    # إرسال الرسالتين
     bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
+    time.sleep(1) # فاصل زمني بسيط لضمان وصول الرسائل بالترتيب
+    bot.send_message(message.chat.id, example_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_questions(message):
-    # التحقق مما إذا كان المستخدم قد حدد القناة
-    if message.chat.id not in user_channels:
-        msg = bot.reply_to(message, "⚠️ من فضلك أرسل معرف القناة أولاً (@channel):")
-        bot.register_next_step_handler(msg, get_channel_id)
-        return
-
-    channel_id = user_channels[message.chat.id]
     questions = parse_questions_universal(message.text)
-    
+
     if not questions:
-        bot.reply_to(message, "⚠️ لم يتم التعرف على الأسئلة. تأكد من التنسيق.")
+        bot.reply_to(message, "⚠️ لم يتم التعرف على الأسئلة. تأكد من فصل الأسئلة بسطر فارغ ووضع الإجابة بين < >.")
         return
 
-    bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
+    total = len(questions)
+    bot.reply_to(message, f"⏳ جاري معالجة ونشر {total} سؤال في القناة...")
+
     sent_count = 0
     for q in questions:
         try:
             bot.send_poll(
-                chat_id=channel_id,
+                chat_id=CHANNEL_ID,
                 question=q['question'],
                 options=q['options'],
                 type='quiz',
@@ -108,18 +125,19 @@ def handle_questions(message):
                 is_anonymous=True
             )
             sent_count += 1
-            time.sleep(2)
+            time.sleep(2) # تأخير لتجنب حظر التيليجرام عند النشر الكثيف
         except Exception as e:
-            bot.send_message(message.chat.id, f"❌ خطأ في النشر: تأكد أن البوت مسؤول في القناة.")
-            break
+            bot.send_message(message.chat.id, f"❌ خطأ في نشر: {q['question'][:30]}...")
 
-    bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح.")
+    bot.send_message(message.chat.id, f"✅ **تم الانتهاء!**\n🚀 تم نشر {sent_count} سؤال بنجاح في القناة.", parse_mode='Markdown')
 
+# --- تشغيل البوت مع السيرفر ---
 if __name__ == "__main__":
     Thread(target=run_web_server).start()
-    print("البوت يعمل...")
+    
+    print("البوت وسيرفر الويب يعملان الآن...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
-            time.sleep(5)
+            time.sleep(1)
