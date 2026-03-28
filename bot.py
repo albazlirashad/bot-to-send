@@ -92,15 +92,16 @@ def parse_questions_universal(text):
 @bot.message_handler(commands=['start'])
 def start_command(message):
     welcome_text = (
-        "👋 **أهلاً بك في بوت نشر الاختبارات التفاعلية**\n\n"
-        "أنا أساعدك على تحويل أسئلتك إلى اختبارات (Quizzes) ونشرها في قناتك آلياً.\n\n"
-        "📢 **شرط أساسي:**\n"
-        "يجب إضافة البوت كـ **مشرف (Admin)** في قناتك أولاً ومنحه صلاحية 'نشر الرسائل'.\n"
+        "✨ **أهلاً بك في نظام النشر الذكي للاختبارات!** ✨\n\n"
+        "أنا بوت متخصص في تحويل قوائم الأسئلة النصية إلى اختبارات تفاعلية (Quizzes) ونشرها في قناتك بضغطة واحدة.\n\n"
+        "📢 **خطوات العمل الأساسية:**\n"
+        "1️⃣ أضف البوت كـ **مشرف (Admin)** في قناتك.\n"
+        "2️⃣ امنحه صلاحية **'نشر الرسائل'** ليعمل بنجاح.\n"
         "--------------------------\n"
-        "📜 **قواعد سريعة:**\n"
-        "1️⃣ اترك **سطر فارغ** بين كل سؤال والآخر.\n"
-        "2️⃣ ضع الإجابة الصحيحة بين علامتي **`< >`**.\n\n"
-        "📍 **الآن، أرسل معرف القناة (مثلاً @mychannel):**"
+        "📜 **قواعد التنسيق السريع:**\n"
+        "• اترك سطرًا فارغًا بين كل سؤال والآخر.\n"
+        "• ضع الإجابة الصحيحة دائمًا بين علامتي `< >`.\n\n"
+        "📍 **الآن، يرجى إرسال معرف قناتك (مثلاً @mychannel):**"
     )
     msg = bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown')
     bot.register_next_step_handler(msg, save_channel_step)
@@ -108,9 +109,20 @@ def start_command(message):
 def save_channel_step(message):
     raw_input = message.text.strip()
     
-    # حماية: منع حفظ الأوامر كمعرف للقناة
+    # حماية واستجابة للأوامر أثناء طلب المعرف
     if raw_input.startswith('/'):
-        msg = bot.send_message(message.chat.id, "⚠️ خطأ: يرجى إرسال معرف القناة (مثل @channel) وليس أمراً. حاول مجدداً:")
+        if raw_input == '/start': return start_command(message)
+        if raw_input == '/help': return help_command(message)
+        if raw_input == '/settings': return show_settings(message)
+        
+        msg = bot.send_message(message.chat.id, "⚠️ خطأ: يرجى إرسال معرف القناة (مثلاً @channel) أولاً، أو اختر أمراً واضحاً من القائمة:")
+        bot.register_next_step_handler(msg, save_channel_step)
+        return
+
+    # التحقق إذا كانت رسالة عادية وليست معرف قناة
+    is_not_id = not (raw_input.startswith('@') or 't.me/' in raw_input or len(raw_input.split()) == 1)
+    if is_not_id:
+        msg = bot.send_message(message.chat.id, "❌ عذراً، لا يمكنني قبول هذه الرسالة. أحتاج فقط إلى معرف القناة (مثلاً: @mychannel) لربط البوت:")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
@@ -151,15 +163,28 @@ def change_channel_callback(call):
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
-        "📖 **دليل المساعدة والتنسيق**\n\n"
-        "1️⃣ أضف البوت مشرفاً (Admin) في القناة.\n"
-        "2️⃣ فعل صلاحية 'نشر الرسائل'.\n"
-        "3️⃣ أرسل الأسئلة مع سطر فارغ بين كل سؤال.\n\n"
-        "📝 **التنسيق الصحيح:**\n"
-        "السؤال هنا\n"
-        "خيار أول\n"
-        "<الخيار الصحيح>\n"
-        "خيار ثالث"
+        "📖 **دليل التنسيق الشامل والمطور**\n\n"
+        "لتحويل رسائلك إلى اختبارات، اتبع هذا التنسيق بدقة:\n\n"
+        "✅ **القواعد:**\n"
+        "1️⃣ اترك سطرًا فارغًا بين كل سؤال والآخر.\n"
+        "2️⃣ ضع الإجابة الصحيحة بين `< >`.\n"
+        "3️⃣ تأكد من وجود البوت كآدمن في القناة.\n\n"
+        "📝 **أمثلة للتنسيق (يمكنك نسخها وتجربتها):**\n\n"
+        "**السؤال الأول (اختيار من متعدد):**\n"
+        "ما هو أكبر كوكب في مجموعتنا الشمسية؟\n"
+        "المريخ\n"
+        "<المشتري>\n"
+        "زحل\n\n"
+        "**السؤال الثاني (إكمال فراغ):**\n"
+        "تعتبر مدينة ........ العاصمة الاقتصادية لليمن.\n"
+        "<عدن>\n"
+        "المكلا\n"
+        "الحديدة\n\n"
+        "**السؤال الثالث (صح أو خطأ):**\n"
+        "هل الشمس كوكب؟\n"
+        "صح\n"
+        "<خطأ>\n\n"
+        "⚠️ **تنبيه:** إذا لم ينشر البوت، راجع صلاحيات الآدمن في القناة."
     )
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
