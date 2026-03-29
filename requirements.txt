@@ -1,3 +1,4 @@
 pyTelegramBotAPI
 flask
 python-dotenv
+gunicorn
