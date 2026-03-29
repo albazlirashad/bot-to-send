@@ -15,6 +15,9 @@ app = Flask(__name__)
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
 
+# مخزن مؤقت لحفظ الأسئلة قبل التأكيد (لأننا لا نستخدم قاعدة بيانات)
+user_data_storage = {}
+
 @app.route('/')
 def home():
     return "Bot is Running Live!", 200
@@ -177,6 +180,53 @@ def help_command(message):
     )
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
+# --- الجزء المطور: نظام التأكيد والمعالجة الذكية للطول ---
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_pub", "cancel_pub"])
+def handle_publish_confirmation(call):
+    chat_id = call.message.chat.id
+    if chat_id not in user_data_storage:
+        bot.answer_callback_query(call.id, "⚠️ انتهت الجلسة، يرجى إرسال الأسئلة مجدداً.")
+        return
+
+    if call.data == "cancel_pub":
+        bot.edit_message_text("❌ تم إلغاء عملية النشر.", chat_id, call.message.message_id)
+        user_data_storage.pop(chat_id, None)
+        return
+
+    questions = user_data_storage[chat_id]['questions']
+    channel_id = user_data_storage[chat_id]['channel_id']
+    
+    bot.edit_message_text(f"⏳ جاري النشر في {channel_id}...", chat_id, call.message.message_id)
+    
+    sent_count = 0
+    for q in questions:
+        # معالجة النصوص الطويلة (قانون التجارة)
+        is_too_long = len(q['question']) > 300 or any(len(opt) > 100 for opt in q['options'])
+        
+        try:
+            if is_too_long:
+                text_quiz = f"📝 **سؤال طويل:**\n\n{q['question']}\n\n"
+                for idx, opt in enumerate(q['options']):
+                    mark = "✅" if idx == q['correct'] else "▫️"
+                    text_quiz += f"{mark} {opt}\n"
+                bot.send_message(chat_id=channel_id, text=text_quiz)
+            else:
+                bot.send_poll(
+                    chat_id=channel_id,
+                    question=q['question'],
+                    options=q['options'],
+                    type='quiz',
+                    correct_option_id=q['correct'],
+                    is_anonymous=True
+                )
+            sent_count += 1
+            time.sleep(1.5)
+        except Exception:
+            continue
+            
+    bot.send_message(chat_id, f"✅ تم نشر {sent_count} سؤال بنجاح!")
+    user_data_storage.pop(chat_id, None)
+
 @bot.message_handler(func=lambda message: True)
 def handle_questions(message, channel_id=None):
     if not channel_id:
@@ -187,32 +237,36 @@ def handle_questions(message, channel_id=None):
     questions = parse_questions_universal(message.text)
     if not questions:
         bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وضع الإجابة الصحيحة بين `< >` وسطر فارغ بين الأسئلة.")
-        # البقاء في نفس الخطوة بانتظار تصحيح النص
         bot.register_next_step_handler(message, handle_questions, channel_id)
         return
 
-    bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
-    sent_count = 0
-    for q in questions:
-        try:
-            bot.send_poll(
-                chat_id=channel_id,
-                question=q['question'],
-                options=q['options'],
-                type='quiz',
-                correct_option_id=q['correct'],
-                is_anonymous=True
-            )
-            sent_count += 1
-            time.sleep(1)
-        except Exception:
-            bot.send_message(message.chat.id, f"❌ فشل النشر. تأكد أن البوت آدمن في القناة {channel_id}.")
-            break
-            
-    if sent_count > 0:
-        bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح!")
+    # تحليل البيانات قبل النشر (الاقتراح)
+    long_q = sum(1 for q in questions if len(q['question']) > 300 or any(len(opt) > 100 for opt in q['options']))
     
-    # البقاء في وضع استقبال الأسئلة لنفس القناة
+    user_data_storage[message.chat.id] = {
+        'questions': questions,
+        'channel_id': channel_id
+    }
+
+    report = (
+        f"📊 **تقرير الفحص القبل للنشر:**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"✅ عدد الأسئلة المكتشفة: {len(questions)}\n"
+        f"📝 أسئلة عادية (Poll): {len(questions) - long_q}\n"
+        f"⚠️ نصوص طويلة (Text): {long_q}\n"
+        f"📍 القناة المستهدفة: {channel_id}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"هل تريد البدء بعملية النشر الآن؟"
+    )
+
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ نعم، انشر الآن", callback_data="confirm_pub"),
+        types.InlineKeyboardButton("❌ إلغاء", callback_data="cancel_pub")
+    )
+    bot.send_message(message.chat.id, report, parse_mode='Markdown', reply_markup=markup)
+    
+    # السماح بإرسال دفعة جديدة من الأسئلة في أي وقت
     bot.register_next_step_handler(message, handle_questions, channel_id)
 
 # --- التشغيل النهائي بنظام Webhook ---
