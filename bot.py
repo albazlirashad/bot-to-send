@@ -3,37 +3,34 @@ from telebot import types
 import re
 import time
 import os
-import sqlite3
-from threading import Thread
-from flask import Flask
+from flask import Flask, request
 from dotenv import load_dotenv
 
 # تحميل التوكن من ملف .env
 load_dotenv()
 
-# --- إعداد سيرفر Flask لضمان استمرارية الخدمة على Render ---
+# --- إعداد سيرفر Flask لضمان استمرارية الخدمة على Render بنظام Webhook ---
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot is Running Live!"
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-# --- إعدادات البوت وقاعدة البيانات ---
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
 
-def init_db():
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (user_id INTEGER PRIMARY KEY, channel_id TEXT)''')
-    conn.commit()
-    conn.close()
+@app.route('/')
+def home():
+    return "Bot is Running Live!", 200
 
+# المسار الخاص باستقبال تحديثات تليجرام
+@app.route('/' + API_TOKEN, methods=['POST'])
+def get_message():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "!", 200
+    else:
+        return "Forbidden", 403
+
+# --- إعدادات البوت ---
 def set_bot_commands():
     commands = [
         types.BotCommand("start", "🚀 بدء البوت / ربط القناة"),
@@ -41,21 +38,6 @@ def set_bot_commands():
         types.BotCommand("help", "❓ دليل التنسيق والمساعدة")
     ]
     bot.set_my_commands(commands)
-
-def set_user_channel(user_id, channel_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('REPLACE INTO users (user_id, channel_id) VALUES (?, ?)', (user_id, channel_id))
-    conn.commit()
-    conn.close()
-
-def get_user_channel(user_id):
-    conn = sqlite3.connect('users.db')
-    c = conn.cursor()
-    c.execute('SELECT channel_id FROM users WHERE user_id = ?', (user_id,))
-    result = c.fetchone()
-    conn.close()
-    return result[0] if result else None
 
 # --- منطق معالجة الأسئلة (المطور) ---
 def parse_questions_universal(text):
@@ -110,17 +92,15 @@ def start_command(message):
 def save_channel_step(message):
     raw_input = message.text.strip()
     
-    # حماية واستجابة للأوامر أثناء طلب المعرف
     if raw_input.startswith('/'):
         if raw_input == '/start': return start_command(message)
         if raw_input == '/help': return help_command(message)
-        if raw_input == '/settings': return show_settings(message)
+        if raw_input == '/settings': return show_settings(message, None)
         
         msg = bot.send_message(message.chat.id, "⚠️ خطأ: يرجى إرسال معرف القناة (مثلاً @channel) أولاً، أو اختر أمراً واضحاً من القائمة:")
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
-    # التحقق إذا كانت رسالة عادية وليست معرف قناة
     is_not_id = not (raw_input.startswith('@') or 't.me/' in raw_input or len(raw_input.split()) == 1)
     if is_not_id:
         msg = bot.send_message(message.chat.id, "❌ عذراً، لا يمكنني قبول هذه الرسالة. أحتاج فقط إلى معرف القناة (مثلاً: @mychannel) لربط البوت:")
@@ -135,7 +115,6 @@ def save_channel_step(message):
         channel_id = '@' + raw_input
 
     channel_id = channel_id.replace(' ', '')
-    set_user_channel(message.chat.id, channel_id)
     
     success_text = (
         f"✅ **تم حفظ القناة بنجاح:** {channel_id}\n\n"
@@ -155,12 +134,13 @@ def save_channel_step(message):
         "<خطأ>\n\n"
         "💡 **تذكير:** اترك سطرًا فارغًا بين كل سؤال والآخر."
     )
-    bot.send_message(message.chat.id, success_text, parse_mode='Markdown')
+    msg = bot.send_message(message.chat.id, success_text, parse_mode='Markdown')
+    # نمرر المعرف للخطوة التالية بدلاً من قاعدة البيانات
+    bot.register_next_step_handler(msg, handle_questions, channel_id)
 
 @bot.message_handler(commands=['settings'])
-def show_settings(message):
-    current = get_user_channel(message.chat.id)
-    text = f"⚙️ **إعدادات القناة:**\n📍 القناة الحالية: `{current if current else 'غير محددة'}`"
+def show_settings(message, current_id=None):
+    text = f"⚙️ **إعدادات القناة:**\n📍 القناة الحالية: `{current_id if current_id else 'غير محددة'}`"
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🔄 تغيير القناة", callback_data="change_ch"))
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
@@ -198,9 +178,7 @@ def help_command(message):
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
-def handle_questions(message):
-    channel_id = get_user_channel(message.chat.id)
-    
+def handle_questions(message, channel_id=None):
     if not channel_id:
         msg = bot.reply_to(message, "⚠️ لم تربط قناة بعد. أرسل معرف قناتك الآن:")
         bot.register_next_step_handler(msg, save_channel_step)
@@ -209,6 +187,8 @@ def handle_questions(message):
     questions = parse_questions_universal(message.text)
     if not questions:
         bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وضع الإجابة الصحيحة بين `< >` وسطر فارغ بين الأسئلة.")
+        # البقاء في نفس الخطوة بانتظار تصحيح النص
+        bot.register_next_step_handler(message, handle_questions, channel_id)
         return
 
     bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
@@ -231,9 +211,20 @@ def handle_questions(message):
             
     if sent_count > 0:
         bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح!")
+    
+    # البقاء في وضع استقبال الأسئلة لنفس القناة
+    bot.register_next_step_handler(message, handle_questions, channel_id)
 
+# --- التشغيل النهائي بنظام Webhook ---
 if __name__ == "__main__":
-    init_db()
     set_bot_commands()
-    Thread(target=run_web_server).start()
-    bot.polling(none_stop=True)
+    
+    # الحصول على رابط المشروع من Render لتعيين الويب هوك
+    RENDER_URL = os.getenv('RENDER_EXTERNAL_URL')
+    if RENDER_URL:
+        bot.remove_webhook()
+        bot.set_webhook(url=f"{RENDER_URL}/{API_TOKEN}")
+    
+    # تشغيل Flask بشكل أساسي
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
