@@ -148,10 +148,71 @@ def show_settings(message, current_id=None):
     keyboard.add(types.InlineKeyboardButton("🔄 تغيير القناة", callback_data="change_ch"))
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
-@bot.callback_query_handler(func=lambda call: call.data == "change_ch")
-def change_channel_callback(call):
-    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة الجديد:")
-    bot.register_next_step_handler(msg, save_channel_step)
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_pub", "cancel_pub"])
+def handle_publish_confirmation(call):
+    chat_id = call.message.chat.id
+    if chat_id not in user_data_storage:
+        bot.answer_callback_query(call.id, "⚠️ انتهت الجلسة، يرجى إرسال الأسئلة مجدداً.")
+        return
+
+    if call.data == "cancel_pub":
+        bot.edit_message_text("❌ تم إلغاء عملية النشر.", chat_id, call.message.message_id)
+        user_data_storage.pop(chat_id, None)
+        return
+
+    questions = user_data_storage[chat_id]['questions']
+    channel_id = user_data_storage[chat_id]['channel_id']
+    
+    bot.edit_message_text(f"⏳ جاري النشر في {channel_id}...\n(قد يستغرق وقتاً لتجنب قيود تليجرام)", chat_id, call.message.message_id)
+    
+    sent_count = 0
+    for i, q in enumerate(questions):
+        # فحص طول النصوص مسبقاً (حدود تليجرام: السؤال 300، الخيارات 100)
+        is_too_long = len(q['question']) > 300 or any(len(opt) > 100 for opt in q['options'])
+        
+        try:
+            if is_too_long:
+                text_quiz = f"📝 **سؤال {sent_count + 1}:**\n\n{q['question']}\n\n"
+                for idx, opt in enumerate(q['options']):
+                    mark = "✅" if idx == q['correct'] else "▫️"
+                    text_quiz += f"{mark} {opt}\n"
+                bot.send_message(chat_id=channel_id, text=text_quiz)
+            else:
+                bot.send_poll(
+                    chat_id=channel_id,
+                    question=q['question'],
+                    options=q['options'],
+                    type='quiz',
+                    correct_option_id=q['correct'],
+                    is_anonymous=True
+                )
+            
+            sent_count += 1
+            # زيادة وقت الانتظار كل 20 سؤالاً لتجنب الحظر
+            if sent_count % 20 == 0:
+                time.sleep(10)  # استراحة قصيرة كل 20 سؤال
+            else:
+                time.sleep(2)   # وقت كافٍ بين كل سؤال والآخر
+
+        except telebot.apihelper.ApiTelegramException as e:
+            if e.error_code == 429: # خطأ Flood (كثرة الإرسال)
+                retry_after = e.result_json.get('parameters', {}).get('retry_after', 10)
+                bot.send_message(chat_id, f"⚠️ تليجرام يطلب الانتظار {retry_after} ثانية... سأكمل تلقائياً.")
+                time.sleep(retry_after + 1)
+                # إعادة المحاولة لهذا السؤال تحديداً مرة أخرى
+                try:
+                    bot.send_poll(channel_id, q['question'], q['options'], type='quiz', correct_option_id=q['correct'], is_anonymous=True)
+                    sent_count += 1
+                except: continue
+            else:
+                print(f"Error at question {i}: {e}")
+                continue 
+        except Exception as e:
+            print(f"General error: {e}")
+            continue
+            
+    bot.send_message(chat_id, f"✅ تم الانتهاء! تم نشر {sent_count} من أصل {len(questions)} سؤال.")
+    user_data_storage.pop(chat_id, None)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
