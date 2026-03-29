@@ -1,25 +1,22 @@
-import telebot
-from telebot import types
+import os
 import re
 import time
-import os
 from flask import Flask, request
+import telebot
+from telebot import types
 from dotenv import load_dotenv
 
-# تحميل التوكن من ملف .env
+# تحميل الإعدادات
 load_dotenv()
-
-# --- إعداد سيرفر Flask لضمان استمرارية الخدمة على Render بنظام Webhook ---
-app = Flask(__name__)
-
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
+app = Flask(__name__)
 
+# --- إعداد سيرفر Flask لضمان استمرارية الخدمة ---
 @app.route('/')
 def home():
     return "Bot is Running Live!", 200
 
-# المسار الخاص باستقبال تحديثات تليجرام
 @app.route('/' + API_TOKEN, methods=['POST'])
 def get_message():
     if request.headers.get('content-type') == 'application/json':
@@ -27,49 +24,37 @@ def get_message():
         update = telebot.types.Update.de_json(json_string)
         bot.process_new_updates([update])
         return "!", 200
-    else:
-        return "Forbidden", 403
+    return "Forbidden", 403
 
-# --- إعدادات البوت ---
-def set_bot_commands():
-    commands = [
-        types.BotCommand("start", "🚀 بدء البوت / ربط القناة"),
-        types.BotCommand("settings", "⚙️ إعدادات القناة"),
-        types.BotCommand("help", "❓ دليل التنسيق والمساعدة")
-    ]
-    bot.set_my_commands(commands)
+# --- منطق معالجة الأسئلة المطور (تجاهل الأخطاء والاستمرار) ---
+def parse_question_smart(text_block):
+    # البحث عن الإجابة الصحيحة بين < >
+    match_correct = re.search(r'<(.*?)>', text_block)
+    if not match_correct:
+        return None
+    
+    correct_answer = match_correct.group(1).strip()
+    clean_block = text_block.replace(f"<{correct_answer}>", correct_answer)
+    
+    # تقسيم النص لأسطر وتنظيفها
+    lines = [l.strip() for l in clean_block.split('\n') if l.strip()]
+    if len(lines) < 2:
+        return None
 
-# --- منطق معالجة الأسئلة (المطور) ---
-def parse_questions_universal(text):
-    blocks = re.split(r'\n\s*\n', text.strip())
-    if len(blocks) <= 1:
-        blocks = re.split(r'\n(?=\d+[\.\-\)])|^(?=\d+[\.\-\)])', text.strip())
+    question_text = re.sub(r'^\d+[\s\.\-\)]+', '', lines[0]).strip()
+    options = lines[1:]
 
-    parsed_data = []
-    for block in blocks:
-        lines = [l.strip() for l in block.strip().split('\n') if l.strip()]
-        if len(lines) < 2: continue
+    # التحقق من حدود تيليجرام (السؤال < 300 حرف، الخيارات < 10)
+    if len(question_text) > 300 or len(options) > 10 or len(options) < 2:
+        return "TOO_BIG_OR_INVALID"
 
-        question_raw = lines[0]
-        question_text = re.sub(r'^\d+[\s\.\-\)]+', '', question_raw)
-        question_text = re.sub(r'\[\d+.*?\]', '', question_text).strip()
+    try:
+        correct_index = options.index(correct_answer)
+        return {"question": question_text, "options": options, "correct": correct_index}
+    except ValueError:
+        return None
 
-        options = []
-        correct_index = -1
-        for line in lines[1:]:
-            is_correct = '<' in line and '>' in line
-            clean_opt = line.replace('•', '').replace('<', '').replace('>', '')
-            clean_opt = re.sub(r'\[\d+.*?\]', '', clean_opt).strip()
-            if clean_opt:
-                options.append(clean_opt)
-                if is_correct:
-                    correct_index = len(options) - 1
-
-        if len(options) >= 2 and correct_index != -1:
-            parsed_data.append({'question': question_text, 'options': options, 'correct': correct_index})
-    return parsed_data
-
-# --- الأوامر والردود التفاعلية ---
+# --- الأوامر والرسائل (نفس نصوصك الأصلية) ---
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -91,89 +76,32 @@ def start_command(message):
 
 def save_channel_step(message):
     raw_input = message.text.strip()
-    
     if raw_input.startswith('/'):
         if raw_input == '/start': return start_command(message)
-        if raw_input == '/help': return help_command(message)
-        if raw_input == '/settings': return show_settings(message, None)
-        
-        msg = bot.send_message(message.chat.id, "⚠️ خطأ: يرجى إرسال معرف القناة (مثلاً @channel) أولاً، أو اختر أمراً واضحاً من القائمة:")
-        bot.register_next_step_handler(msg, save_channel_step)
         return
-
-    is_not_id = not (raw_input.startswith('@') or 't.me/' in raw_input or len(raw_input.split()) == 1)
-    if is_not_id:
-        msg = bot.send_message(message.chat.id, "❌ عذراً، لا يمكنني قبول هذه الرسالة. أحتاج فقط إلى معرف القناة (مثلاً: @mychannel) لربط البوت:")
-        bot.register_next_step_handler(msg, save_channel_step)
-        return
-
-    if 't.me/' in raw_input:
-        channel_id = '@' + raw_input.split('t.me/')[-1].split('/')[0]
-    elif raw_input.startswith('@'):
-        channel_id = raw_input
-    else:
-        channel_id = '@' + raw_input
-
-    channel_id = channel_id.replace(' ', '')
+    
+    # تنظيف معرف القناة
+    channel_id = raw_input if raw_input.startswith('@') else '@' + raw_input
     
     success_text = (
         f"✅ **تم حفظ القناة بنجاح:** {channel_id}\n\n"
         "🚀 **أرسل أسئلتك الآن ليتم نشرها فوراً!**\n\n"
-        "📝 **أمثلة للتنسيق الصحيح (يمكنك النسخ والتجربة):**\n\n"
-        "ما هو أسرع حيوان بري في العالم؟\n"
-        "الأسد\n"
-        "<الفهد>\n"
-        "الغزال\n"
-        "\n"
-        "يُعتبر غاز ........ هو الغاز الضروري للتنفس.\n"
-        "النيتروجين\n"
-        "<الأكسجين>\n"
-        "\n"
-        "هل تشرق الشمس من جهة الغرب؟\n"
-        "صح\n"
-        "<خطأ>\n\n"
         "💡 **تذكير:** اترك سطرًا فارغًا بين كل سؤال والآخر."
     )
     msg = bot.send_message(message.chat.id, success_text, parse_mode='Markdown')
-    # نمرر المعرف للخطوة التالية بدلاً من قاعدة البيانات
     bot.register_next_step_handler(msg, handle_questions, channel_id)
-
-@bot.message_handler(commands=['settings'])
-def show_settings(message, current_id=None):
-    text = f"⚙️ **إعدادات القناة:**\n📍 القناة الحالية: `{current_id if current_id else 'غير محددة'}`"
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔄 تغيير القناة", callback_data="change_ch"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: call.data == "change_ch")
-def change_channel_callback(call):
-    msg = bot.send_message(call.message.chat.id, "📝 أرسل معرف القناة الجديد:")
-    bot.register_next_step_handler(msg, save_channel_step)
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
     help_text = (
         "📖 **دليل التنسيق الشامل**\n\n"
-        "لتحويل رسائلك إلى اختبارات، اتبع هذا التنسيق بدقة:\n\n"
-        "✅ **القواعد:**\n"
         "1️⃣ اترك سطرًا فارغًا بين كل سؤال والآخر.\n"
-        "2️⃣ ضع الإجابة الصحيحة دائمًا بين علامتي `< >`.\n"
-        "3️⃣ تأكد من إضافة البوت كمشرف (Admin) في القناة.\n\n"
-        "📝 **أمثلة للتنسيق:**\n\n"
-        "ما هو أكبر كوكب في مجموعتنا الشمسية؟\n"
-        "المريخ\n"
-        "<المشتري>\n"
-        "زحل\n"
-        "\n"
-        "تعتبر مدينة ........ العاصمة الاقتصادية لليمن.\n"
-        "<عدن>\n"
-        "المكلا\n"
-        "الحديدة\n"
-        "\n"
-        "هل الشمس كوكب؟\n"
-        "صح\n"
-        "<خطأ>\n\n"
-        "⚠️ **تنبيه:** إذا لم ينشر البوت، يرجى مراجعة صلاحية 'نشر الرسائل' في قناتك."
+        "2️⃣ ضع الإجابة الصحيحة دائماً بين علامتي `< >`.\n\n"
+        "📝 **مثال:**\n"
+        "ما هو عاصمة اليمن؟\n"
+        "عدن\n"
+        "<صنعاء>\n"
+        "تعز"
     )
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
@@ -184,47 +112,56 @@ def handle_questions(message, channel_id=None):
         bot.register_next_step_handler(msg, save_channel_step)
         return
 
-    questions = parse_questions_universal(message.text)
-    if not questions:
-        bot.reply_to(message, "⚠️ لم أتعرف على الأسئلة. تأكد من وضع الإجابة الصحيحة بين `< >` وسطر فارغ بين الأسئلة.")
-        # البقاء في نفس الخطوة بانتظار تصحيح النص
-        bot.register_next_step_handler(message, handle_questions, channel_id)
-        return
-
-    bot.reply_to(message, f"⏳ جاري النشر في {channel_id}...")
-    sent_count = 0
-    for q in questions:
-        try:
-            bot.send_poll(
-                chat_id=channel_id,
-                question=q['question'],
-                options=q['options'],
-                type='quiz',
-                correct_option_id=q['correct'],
-                is_anonymous=True
-            )
-            sent_count += 1
-            time.sleep(1)
-        except Exception:
-            bot.send_message(message.chat.id, f"❌ فشل النشر. تأكد أن البوت آدمن في القناة {channel_id}.")
-            break
-            
-    if sent_count > 0:
-        bot.send_message(message.chat.id, f"✅ تم نشر {sent_count} سؤال بنجاح!")
+    # تقسيم الرسالة الكبيرة إلى كتل أسئلة
+    blocks = re.split(r'\n\s*\n', message.text.strip())
+    bot.send_message(message.chat.id, f"⏳ جاري معالجة {len(blocks)} سؤال ونشرها في {channel_id}...")
     
-    # البقاء في وضع استقبال الأسئلة لنفس القناة
+    sent_count = 0
+    skipped_count = 0
+
+    for block in blocks:
+        data = parse_question_smart(block)
+        
+        if data == "TOO_BIG_OR_INVALID":
+            skipped_count += 1
+            continue # يتجاهل السؤال الكبير ويستمر للباقي
+            
+        if data:
+            try:
+                bot.send_poll(
+                    chat_id=channel_id,
+                    question=data['question'],
+                    options=data['options'],
+                    type='quiz',
+                    correct_option_id=data['correct'],
+                    is_anonymous=True
+                )
+                sent_count += 1
+                time.sleep(1) # لتجنب سبام تيليجرام
+            except Exception:
+                skipped_count += 1
+        else:
+            skipped_count += 1
+
+    result_msg = f"✅ تم نشر {sent_count} سؤال بنجاح!"
+    if skipped_count > 0:
+        result_msg += f"\n⚠️ تم تجاهل {skipped_count} سؤال (بسبب حجمها أو خطأ في التنسيق)."
+    
+    bot.send_message(message.chat.id, result_msg)
+    # الاستمرار في نفس القناة لاستقبال الدفعة القادمة
     bot.register_next_step_handler(message, handle_questions, channel_id)
 
-# --- التشغيل النهائي بنظام Webhook ---
+# --- التشغيل النهائي ---
 if __name__ == "__main__":
-    set_bot_commands()
-    
-    # الحصول على رابط المشروع من Render لتعيين الويب هوك
+    bot.set_my_commands([
+        types.BotCommand("start", "🚀 بدء البوت / ربط القناة"),
+        types.BotCommand("help", "❓ دليل التنسيق")
+    ])
+
     RENDER_URL = os.getenv('RENDER_EXTERNAL_URL')
     if RENDER_URL:
         bot.remove_webhook()
         bot.set_webhook(url=f"{RENDER_URL}/{API_TOKEN}")
     
-    # تشغيل Flask بشكل أساسي
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
